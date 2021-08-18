@@ -14,25 +14,26 @@
 #define LOW 0
 #define HTTP_REQUEST_PROC_LOAD 0xfffff
 #define RS232_CHAR_PROC_LOAD 0xfffff
+#define CPU_limit (float)(85)
 TickType_t idletime;
 
 TaskHandle_t taskreadsensor = NULL; 
 TaskHandle_t taskcontrol = NULL; 
-TaskHandle_t TaskLEDR = NULL;
-TaskHandle_t TaskLEDG = NULL;
-TaskHandle_t TaskCPU = NULL;
+TaskHandle_t taskCPU = NULL;
 TaskHandle_t taskHTTP = NULL;
 TaskHandle_t taskRS232 = NULL;
+TaskHandle_t task_led_control = NULL;
 QueueHandle_t xQueueSensores;
+QueueHandle_t xQueueCPU;
 
 void gpio_all_config();
 void Task_Read_Sensor(void *pvParameters); 
 void task_control(void *pvParameters);
-void TaskLedR(void *pvParameters);
-void TaskLedG(void *pvParameters);
 void CPU_usage(void *pvParameters);
 void HTTP(void *pvParameters);
 void RS232Task(void*pvParameters);
+void Led_Control(void *pvParameters);
+void LedBlink1Hz(int led);
 gpio_config_t gpio_output={
     .intr_type = GPIO_INTR_DISABLE,
     .mode = GPIO_MODE_OUTPUT,
@@ -68,13 +69,14 @@ void app_main() {
 
  xTaskCreate(Task_Read_Sensor,"Task Read Sensor",configMINIMAL_STACK_SIZE+1024,NULL,1,&taskreadsensor);
  xTaskCreate(task_control,"Task Control",configMINIMAL_STACK_SIZE*2,NULL,2,&taskcontrol);
- xTaskCreate(TaskLedR,"Task Led R",configMINIMAL_STACK_SIZE+1024,NULL,1,&TaskLEDR);
- xTaskCreate(TaskLedG,"Task Led G",configMINIMAL_STACK_SIZE+1024,NULL,1,&TaskLEDG);
- xTaskCreate(CPU_usage,"CPU Usage",configMINIMAL_STACK_SIZE+1024,NULL,1,&TaskCPU);
+ xTaskCreate(CPU_usage,"CPU Usage",configMINIMAL_STACK_SIZE+1024,NULL,1,&taskCPU);
  xTaskCreate(HTTP,"HTTP Task",configMINIMAL_STACK_SIZE,NULL,1,&taskHTTP);
  xTaskCreate(RS232Task,"RS232 Task",configMINIMAL_STACK_SIZE,NULL,1,&taskRS232);
+ xTaskCreate(Led_Control,"Led Control",configMINIMAL_STACK_SIZE,NULL,1,&task_led_control);
+ 
  
  xQueueSensores = xQueueCreate(2,sizeof(int));
+ xQueueCPU = xQueueCreate(1,sizeof(float));
 }
 
 void Task_Read_Sensor(void* pvParameters){
@@ -120,28 +122,31 @@ void task_control(void *pvParameter){
 
 }
 
-
-
-void TaskLedR(void *pvParameters){
-    while(1){
-        gpio_set_level(LED_R,HIGH);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        gpio_set_level(LED_R,LOW);
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-    
+void LedBlink1Hz(int led){
+    gpio_set_level(led,LOW);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    gpio_set_level(led,HIGH);
+    vTaskDelay(pdMS_TO_TICKS(500));
 }
-  
-void TaskLedG(void *pvParameters){
-    while(1){
-        gpio_set_level(LED_G,LOW);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        gpio_set_level(LED_G,HIGH);
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-    
-}
+
    
+void Led_Control(void *pvParameters){
+    float CPU_U = 7;
+    while(1){
+        xQueueReceive(xQueueCPU,&CPU_U,(TickType_t) 0);
+        if(CPU_U <= CPU_limit && CPU_U > (float)(0)){
+            LedBlink1Hz(LED_G);
+        }else if(CPU_U > CPU_limit && CPU_U <= (float)(100)){
+            LedBlink1Hz(LED_R);
+        }else{
+            printf("[CPU: %f%%] \n",CPU_U);
+        }
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+    }
+    
+}
+
 void CPU_usage(void *pvParameters){
     TickType_t xLastWakeTimer;
     const TickType_t xFrequency = pdMS_TO_TICKS(1000);
@@ -157,7 +162,8 @@ void CPU_usage(void *pvParameters){
         CPU = ((float)(ElapsedTime) - (float)(idletime))/(float)(ElapsedTime);
         LastTime = CurrentTime;
         idletime = 0;
-        printf("%f%% \n",CPU);
+        xQueueOverwrite(xQueueCPU,&CPU);
+        printf("[CPU: %f%%] \n",CPU);
         
     }
     
@@ -179,7 +185,7 @@ void HTTP(void*pvParameters){
 
 void RS232Task(void*pvParameters){
     TickType_t xLastWakeTimer;
-    const TickType_t xFrequency = pdMS_TO_TICKS(1000);
+    const TickType_t xFrequency = pdMS_TO_TICKS(100);
     xLastWakeTimer = xTaskGetTickCount();
     int i;
     while(1){
