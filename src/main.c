@@ -38,6 +38,10 @@ float CPU = 0.0;
 TickType_t idletime = 0;
 TickType_t LastTime = 0;
 
+int g_value_sensor1;
+int g_value_sensor2;
+
+
 void gpio_all_config();
 void Task_Read_Sensor(void *pvParameters); 
 void task_control(void *pvParameters);
@@ -74,15 +78,27 @@ void gpio_all_config(){
  gpio_config(&gpio_input);
 
 /********************************************************************/
- adc1_config_width(ADC_WIDTH_BIT_9);
+ adc1_config_width(ADC_WIDTH_BIT_12);
  adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_0);
  adc1_config_channel_atten(ADC1_CHANNEL_3,ADC_ATTEN_DB_0);
 }
 
 
+const uart_port_t uart_num = UART_NUM_0;
+    uart_config_t uart_config = {
+        .baud_rate = 115200,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+    };
+
+
 void app_main() {
  gpio_all_config();
- 
+ uart_param_config(uart_num, &uart_config);
+ uart_set_pin(uart_num,1,3,UART_PIN_NO_CHANGE,UART_PIN_NO_CHANGE);
+ uart_driver_install(uart_num, BUF_SIZE * 2, BUF_SIZE, 0, NULL, 0);
  xTaskCreate(Task_Read_Sensor,"Task Read Sensor",configMINIMAL_STACK_SIZE+1024,NULL,1,&taskreadsensor);
  xTaskCreate(task_control,"Task Control",configMINIMAL_STACK_SIZE*2,NULL,2,&taskcontrol);
  xTaskCreate(CPU_usage,"CPU Usage",configMINIMAL_STACK_SIZE+1024,NULL,1,&taskCPU);
@@ -91,7 +107,7 @@ void app_main() {
  xTaskCreate(Led_Control,"Led Control",configMINIMAL_STACK_SIZE+1024,NULL,1,&task_led_control);
  xTaskCreate(KeyScan,"Key Scan Task",configMINIMAL_STACK_SIZE+1024,NULL,2,&KeyScanTask);
  xQueueSensores = xQueueCreate(2,sizeof(int));
-
+ 
 }
 
 void Task_Read_Sensor(void* pvParameters){
@@ -128,6 +144,8 @@ void task_control(void *pvParameter){
                 }else{
                     gpio_set_level(LED,LOW);
                 }
+                g_value_sensor1 = sensor1;
+                g_value_sensor2 = sensor2;
                 for(i = 0;i < Control;i++);
             
             }
@@ -167,8 +185,6 @@ void CPU_usage(void *pvParameters){
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
         CPU = ((float)(1000) - ((float)(idletime)/(float)(CPU_CLK_FREQ)))/((float)(1000));
         idletime = 0;
-        //printf("[CPU: %f%%] \n",CPU);
-        
         
     }
     
@@ -210,19 +226,6 @@ void RS232Task(void*pvParameters){
 }
 
 void KeyScan(void *pvParameters){
-    const uart_port_t uart_num = UART_NUM_0;
-    uart_config_t uart_config = {
-        .baud_rate = 115200,
-        .data_bits = UART_DATA_8_BITS,
-        .parity = UART_PARITY_DISABLE,
-        .stop_bits = UART_STOP_BITS_1,
-        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-    };
-    uart_param_config(uart_num, &uart_config);
-    uart_set_pin(uart_num,1,3,UART_PIN_NO_CHANGE,UART_PIN_NO_CHANGE);
-    uart_driver_install(uart_num, BUF_SIZE * 2, BUF_SIZE, 0, NULL, 0);
-    char CPU_str[BUF_SIZE];
-    sprintf(CPU_str,"[CPU USAGE = %f %%\n]",CPU);
 
    uint8_t* data = (uint8_t*) malloc(BUF_SIZE);
     while(1){
@@ -231,9 +234,20 @@ void KeyScan(void *pvParameters){
         if(len > 0){
             data[len] = '\0';
             uart_write_bytes(uart_num,data,( uint8_t ) (1) );
-            if(data[len - 1] == '1'){
-                uart_write_bytes(uart_num,CPU_str,strlen(CPU_str));
+            switch (data[len - 1]){
+            case '1':
+                printf(" - [CPU USAGE] %f%%\n",CPU);
+                break;
+            case '2':
+                printf(" - [Sensor 1] %d\n",g_value_sensor1);
+                break;
+            case '3':
+                printf(" - [Sensor 2] %d\n",g_value_sensor2);
+                break;
+            default:
+                break;
             }
+            
             uart_flush(uart_num);
             uart_flush_input(uart_num);
 
