@@ -105,7 +105,7 @@ void app_main() {
  xTaskCreate(HTTP,"HTTP Task",configMINIMAL_STACK_SIZE,NULL,1,&taskHTTP);
  xTaskCreate(RS232Task,"RS232 Task",configMINIMAL_STACK_SIZE,NULL,1,&taskRS232);
  xTaskCreate(Led_Control,"Led Control",configMINIMAL_STACK_SIZE+1024,NULL,1,&task_led_control);
- xTaskCreate(KeyScan,"Key Scan Task",configMINIMAL_STACK_SIZE+1024,NULL,2,&KeyScanTask);
+ xTaskCreate(KeyScan,"Key Scan Task",configMINIMAL_STACK_SIZE+2048,NULL,2,&KeyScanTask);
  xQueueSensores = xQueueCreate(2,sizeof(int));
  
 }
@@ -227,22 +227,27 @@ void RS232Task(void*pvParameters){
 
 void KeyScan(void *pvParameters){
 
+   char* CPU_String = malloc(sizeof(char) * BUF_SIZE);
+   char*  string_sensor1 = malloc(sizeof(char) * BUF_SIZE);
+   char*  string_sensor2 = malloc(sizeof(char) * BUF_SIZE);
    uint8_t* data = (uint8_t*) malloc(BUF_SIZE);
     while(1){
-        //vTaskDelayUntil(&xLastWakeTimer,xFrequency);
         int len = uart_read_bytes(uart_num,data,1,pdMS_TO_TICKS(20));
         if(len > 0){
             data[len] = '\0';
             uart_write_bytes(uart_num,data,( uint8_t ) (1) );
             switch (data[len - 1]){
             case '1':
-                printf(" - [CPU USAGE] %f%%\n",CPU);
+                sprintf(CPU_String,"- [CPU USAGE] %f%%\n\r",CPU);
+                uart_write_bytes(uart_num,CPU_String,strlen(CPU_String));
                 break;
             case '2':
-                printf(" - [Sensor 1] %d\n",g_value_sensor1);
+                sprintf(string_sensor1," - [Sensor 1] %d\n\r",g_value_sensor1);
+                uart_write_bytes(uart_num,string_sensor1,strlen(string_sensor1));
                 break;
             case '3':
-                printf(" - [Sensor 2] %d\n",g_value_sensor2);
+                sprintf(string_sensor2," - [Sensor 2] %d\n\r",g_value_sensor2);
+                uart_write_bytes(uart_num,string_sensor2,strlen(string_sensor2));
                 break;
             default:
                 break;
