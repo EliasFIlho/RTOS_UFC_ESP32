@@ -1,8 +1,12 @@
 #include <stdio.h>
 #include "string.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include"freertos/timers.h"
+#include "freertos/semphr.h"
+
 #include "driver/gpio.h"
 #include "driver/adc.h"
 #include "driver/uart.h"
@@ -34,6 +38,18 @@ TaskHandle_t task_led_control = NULL;
 TaskHandle_t KeyScanTask = NULL;
 QueueHandle_t xQueueSensores;
 QueueHandle_t xQueueCPU;
+
+TimerHandle_t xTimerReadSensor;
+TimerHandle_t xTimerControl;
+TimerHandle_t xTimerTaskCPU;
+TimerHandle_t xTimerTaskHTTP;
+TimerHandle_t xTimerTaskRS232;
+TimerHandle_t xTimerTaskLed;
+TimerHandle_t xTimerTaskKeyscan;
+
+SemaphoreHandle_t xUartMutex;
+
+
 float CPU = 0.0;
 TickType_t idletime = 0;
 TickType_t LastTime = 0;
@@ -96,9 +112,11 @@ const uart_port_t uart_num = UART_NUM_0;
 
 void app_main() {
  gpio_all_config();
+ 
  uart_param_config(uart_num, &uart_config);
  uart_set_pin(uart_num,1,3,UART_PIN_NO_CHANGE,UART_PIN_NO_CHANGE);
  uart_driver_install(uart_num, BUF_SIZE * 2, BUF_SIZE, 0, NULL, 0);
+ 
  xTaskCreate(Task_Read_Sensor,"Task Read Sensor",configMINIMAL_STACK_SIZE+1024,NULL,1,&taskreadsensor);
  xTaskCreate(task_control,"Task Control",configMINIMAL_STACK_SIZE*2,NULL,2,&taskcontrol);
  xTaskCreate(CPU_usage,"CPU Usage",configMINIMAL_STACK_SIZE+1024,NULL,1,&taskCPU);
@@ -106,8 +124,10 @@ void app_main() {
  xTaskCreate(RS232Task,"RS232 Task",configMINIMAL_STACK_SIZE,NULL,1,&taskRS232);
  xTaskCreate(Led_Control,"Led Control",configMINIMAL_STACK_SIZE+1024,NULL,1,&task_led_control);
  xTaskCreate(KeyScan,"Key Scan Task",configMINIMAL_STACK_SIZE+2048,NULL,2,&KeyScanTask);
- xQueueSensores = xQueueCreate(2,sizeof(int));
  
+ 
+ xQueueSensores = xQueueCreate(2,sizeof(int));
+ xUartMutex = xSemaphoreCreateMutex();
 }
 
 void Task_Read_Sensor(void* pvParameters){
@@ -144,6 +164,7 @@ void task_control(void *pvParameter){
                 }else{
                     gpio_set_level(LED,LOW);
                 }
+                
                 g_value_sensor1 = sensor1;
                 g_value_sensor2 = sensor2;
                 for(i = 0;i < Control;i++);
@@ -185,6 +206,7 @@ void CPU_usage(void *pvParameters){
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
         CPU = ((float)(1000) - ((float)(idletime)/(float)(CPU_CLK_FREQ)))/((float)(1000));
         idletime = 0;
+        
         
     }
     
@@ -232,24 +254,36 @@ void KeyScan(void *pvParameters){
    char*  string_sensor2 = malloc(sizeof(char) * BUF_SIZE);
    uint8_t* data = (uint8_t*) malloc(BUF_SIZE);
     while(1){
+        xSemaphoreTake(xUartMutex,portMAX_DELAY);
         int len = uart_read_bytes(uart_num,data,1,pdMS_TO_TICKS(20));
+        xSemaphoreGive(xUartMutex);
         if(len > 0){
             data[len] = '\0';
             uart_write_bytes(uart_num,data,( uint8_t ) (1) );
             switch (data[len - 1]){
             case '1':
                 sprintf(CPU_String,"- [CPU USAGE] %f%%\n\r",CPU);
+                xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,CPU_String,strlen(CPU_String));
+                xSemaphoreGive(xUartMutex);
                 break;
             case '2':
+               
                 sprintf(string_sensor1," - [Sensor 1] %d\n\r",g_value_sensor1);
+                xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,string_sensor1,strlen(string_sensor1));
+                xSemaphoreGive(xUartMutex);
                 break;
             case '3':
                 sprintf(string_sensor2," - [Sensor 2] %d\n\r",g_value_sensor2);
+                xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,string_sensor2,strlen(string_sensor2));
+                xSemaphoreGive(xUartMutex);
                 break;
             default:
+                xSemaphoreTake(xUartMutex,portMAX_DELAY);
+                uart_write_bytes(uart_num,"\e[1;1H\e[2J 1 - CPU USAGE\n\r2 - Sensor 1 value \n\r3 - Sensor 2 value\n\r",strlen("\e[1;1H\e[2J 1 - CPU USAGE\n\r2 - Sensor 1 value \n\r3 - Sensor 2 value\n\r"));
+                xSemaphoreGive(xUartMutex);
                 break;
             }
             
