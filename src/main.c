@@ -21,13 +21,23 @@
 #define LOW 0
 #define HTTP_REQUEST_PROC_LOAD 0xfffff
 #define RS232_CHAR_PROC_LOAD 0xfffff
-#define Control 0xfff
+#define Control 0xffff
 #define CPU_limit (float)(85)
 
 
+#define xTimerReadSensorTick 50
+#define xTimerControlTick 100
+#define xTimerTaskCPUTick 50
+#define xTimerTaskHTTPTick 500
+#define xTimerTaskRS232Tick 500
+#define xTimerTaskLedTick 1050
+#define xTimerTaskKeyscanTick 1000
+
+#define xTimerNoWait 0
+
 #define BUF_SIZE (1024)
 
-
+#define NUM_TIMER 6
 
 TaskHandle_t taskreadsensor = NULL; 
 TaskHandle_t taskcontrol = NULL; 
@@ -36,6 +46,7 @@ TaskHandle_t taskHTTP = NULL;
 TaskHandle_t taskRS232 = NULL;
 TaskHandle_t task_led_control = NULL;
 TaskHandle_t KeyScanTask = NULL;
+
 QueueHandle_t xQueueSensores;
 QueueHandle_t xQueueCPU;
 
@@ -47,8 +58,12 @@ TimerHandle_t xTimerTaskRS232;
 TimerHandle_t xTimerTaskLed;
 TimerHandle_t xTimerTaskKeyscan;
 
+
+
+
 SemaphoreHandle_t xUartMutex;
 
+int test = 0;
 
 float CPU = 0.0;
 TickType_t idletime = 0;
@@ -68,6 +83,13 @@ void Led_Control(void *pvParameters);
 void LedBlink1Hz(int led);
 void KeyScan(void *pvParameters);
 
+void ReadCallback(TimerHandle_t xTimer);
+void ControlCallback(TimerHandle_t xTimer);
+void CPUCallback(TimerHandle_t xTimer);
+void HTTPCallback(TimerHandle_t xTimer);
+void RS232Callback(TimerHandle_t xTimer);
+void LedCallback(TimerHandle_t xTimer);
+void KeyScanCallback(TimerHandle_t xTimer);
 
 
 gpio_config_t gpio_output={
@@ -117,17 +139,28 @@ void app_main() {
  uart_set_pin(uart_num,1,3,UART_PIN_NO_CHANGE,UART_PIN_NO_CHANGE);
  uart_driver_install(uart_num, BUF_SIZE * 2, BUF_SIZE, 0, NULL, 0);
  
- xTaskCreate(Task_Read_Sensor,"Task Read Sensor",configMINIMAL_STACK_SIZE+1024,NULL,1,&taskreadsensor);
- xTaskCreate(task_control,"Task Control",configMINIMAL_STACK_SIZE*2,NULL,2,&taskcontrol);
- xTaskCreate(CPU_usage,"CPU Usage",configMINIMAL_STACK_SIZE+1024,NULL,1,&taskCPU);
+ xTaskCreate(Task_Read_Sensor,"Task Read Sensor",configMINIMAL_STACK_SIZE+1024,NULL,2,&taskreadsensor);
+ xTaskCreate(task_control,"Task Control",configMINIMAL_STACK_SIZE*2,NULL,3,&taskcontrol);
+ xTaskCreate(CPU_usage,"CPU Usage",configMINIMAL_STACK_SIZE+1024,NULL,2,&taskCPU);
  xTaskCreate(HTTP,"HTTP Task",configMINIMAL_STACK_SIZE,NULL,1,&taskHTTP);
  xTaskCreate(RS232Task,"RS232 Task",configMINIMAL_STACK_SIZE,NULL,1,&taskRS232);
  xTaskCreate(Led_Control,"Led Control",configMINIMAL_STACK_SIZE+1024,NULL,1,&task_led_control);
  xTaskCreate(KeyScan,"Key Scan Task",configMINIMAL_STACK_SIZE+2048,NULL,2,&KeyScanTask);
  
+
+ xTimerTaskHTTP = xTimerCreate("HTTP TIMER",pdMS_TO_TICKS(xTimerTaskHTTPTick),pdFALSE,0,HTTPCallback);
+ xTimerTaskRS232 = xTimerCreate("RS232 Timer",pdMS_TO_TICKS(xTimerTaskRS232Tick),pdFALSE,0,RS232Callback);
+ xTimerTaskKeyscan = xTimerCreate("Key Timer",pdMS_TO_TICKS(xTimerTaskKeyscanTick),pdFALSE,0,KeyScanCallback);
+ xTimerTaskCPU = xTimerCreate("CPU Timer",pdMS_TO_TICKS(xTimerTaskCPUTick),pdFALSE,0,HTTPCallback);
+ xTimerTaskLed = xTimerCreate("LED Timer",pdMS_TO_TICKS(xTimerTaskLedTick),pdFALSE,( void * ) 0,LedCallback);
+ xTimerReadSensor = xTimerCreate("ReadSensor Timer",pdMS_TO_TICKS(xTimerReadSensorTick),pdFALSE,0,ReadCallback);
+ xTimerControl = xTimerCreate("Control Timer",pdMS_TO_TICKS(xTimerControlTick),pdFALSE,0,ControlCallback);
+ 
+
  
  xQueueSensores = xQueueCreate(2,sizeof(int));
  xUartMutex = xSemaphoreCreateMutex();
+
 }
 
 void Task_Read_Sensor(void* pvParameters){
@@ -140,10 +173,13 @@ void Task_Read_Sensor(void* pvParameters){
 
     while(1){
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        xTimerStart(xTimerReadSensor,pdMS_TO_TICKS(xTimerNoWait));
         value_sensor1 = adc1_get_raw(ADC2_CHANNEL_0);
         value_sensor2 = adc1_get_raw(ADC2_CHANNEL_3);
         xQueueSend(xQueueSensores,&value_sensor1,portMAX_DELAY);
         xQueueSend(xQueueSensores,&value_sensor2,portMAX_DELAY);
+        xTimerStop(xTimerReadSensor,pdMS_TO_TICKS(xTimerNoWait));
+     
     }    
 }
 
@@ -155,8 +191,8 @@ void task_control(void *pvParameter){
     xLastWakeTimer = xTaskGetTickCount();
     int i;
     while(1){
-        
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        xTimerStart(xTimerControl,pdMS_TO_TICKS(xTimerNoWait));
         if(xQueueReceive(xQueueSensores,&sensor1,pdMS_TO_TICKS(11)) == pdTRUE){
             if(xQueueReceive(xQueueSensores,&sensor2,pdMS_TO_TICKS(11)) == pdTRUE){
                 if(sensor1 < 150 && sensor2 > 200){
@@ -168,32 +204,42 @@ void task_control(void *pvParameter){
                 g_value_sensor1 = sensor1;
                 g_value_sensor2 = sensor2;
                 for(i = 0;i < Control;i++);
+                xTaskNotifyGive(taskHTTP);
+                xTaskNotifyGive(taskRS232);
+                
             
             }
         
             
         }
-
+        xTimerStop(xTimerControl,pdMS_TO_TICKS(xTimerNoWait));
     }
 
 }
 
 void LedBlink1Hz(int led){
-    gpio_set_level(led,LOW);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    gpio_set_level(led,HIGH);
-    vTaskDelay(pdMS_TO_TICKS(500));
+   
 }
 
    
 void Led_Control(void *pvParameters){
     while(1){
+        //xTimerStart(xTimerTaskLed,pdMS_TO_TICKS(xTimerNoWait));
         if(CPU <= CPU_limit){
-            LedBlink1Hz(LED_G);
+            gpio_set_level(LED_G,LOW);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            gpio_set_level(LED_G,HIGH);
+            vTaskDelay(pdMS_TO_TICKS(500));
         }else if(CPU > CPU_limit){
-            LedBlink1Hz(LED_R);
+            gpio_set_level(LED_R,LOW);
+            vTaskDelay(pdMS_TO_TICKS(500));
+            gpio_set_level(LED_R,HIGH);
+            vTaskDelay(pdMS_TO_TICKS(500));
         }
+        //xTimerStop(xTimerTaskLed,pdMS_TO_TICKS(xTimerNoWait));
         vTaskDelay(pdMS_TO_TICKS(50));
+        
+        
     }
     
 }
@@ -204,8 +250,10 @@ void CPU_usage(void *pvParameters){
     xLastWakeTimer = xTaskGetTickCount();
     while (1){
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        xTimerStart(xTimerTaskCPU,pdMS_TO_TICKS(xTimerNoWait));
         CPU = ((float)(1000) - ((float)(idletime)/(float)(CPU_CLK_FREQ)))/((float)(1000));
         idletime = 0;
+        xTimerStop(xTimerTaskCPU,pdMS_TO_TICKS(xTimerNoWait));
         
         
     }
@@ -228,8 +276,14 @@ void HTTP(void*pvParameters){
     xLastWakeTimer = xTaskGetTickCount();
     int i;
     while(1){
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        xTimerStart(xTimerTaskHTTP,pdMS_TO_TICKS(xTimerNoWait));
         for(i = 0;i < HTTP_REQUEST_PROC_LOAD ;i++ );
+        xTimerStop(xTimerTaskHTTP,pdMS_TO_TICKS(xTimerNoWait));
+
+
+       
     }
     
 }
@@ -241,8 +295,11 @@ void RS232Task(void*pvParameters){
     xLastWakeTimer = xTaskGetTickCount();
     int i;
     while(1){
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        xTimerStart(xTimerTaskRS232,pdMS_TO_TICKS(xTimerNoWait));
         for(i = 0;i < RS232_CHAR_PROC_LOAD ;i++ );
+        xTimerStop(xTimerTaskRS232,pdMS_TO_TICKS(xTimerNoWait));
     }
     
 }
@@ -254,46 +311,73 @@ void KeyScan(void *pvParameters){
    char*  string_sensor2 = malloc(sizeof(char) * BUF_SIZE);
    uint8_t* data = (uint8_t*) malloc(BUF_SIZE);
     while(1){
-        xSemaphoreTake(xUartMutex,portMAX_DELAY);
+        //xSemaphoreTake(xUartMutex,portMAX_DELAY);
         int len = uart_read_bytes(uart_num,data,1,pdMS_TO_TICKS(20));
-        xSemaphoreGive(xUartMutex);
+        //xSemaphoreGive(xUartMutex);
         if(len > 0){
             data[len] = '\0';
             uart_write_bytes(uart_num,data,( uint8_t ) (1) );
             switch (data[len - 1]){
             case '1':
                 sprintf(CPU_String,"- [CPU USAGE] %f%%\n\r",CPU);
-                xSemaphoreTake(xUartMutex,portMAX_DELAY);
+                //xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,CPU_String,strlen(CPU_String));
-                xSemaphoreGive(xUartMutex);
+                //xSemaphoreGive(xUartMutex);
                 break;
             case '2':
                
                 sprintf(string_sensor1," - [Sensor 1] %d\n\r",g_value_sensor1);
-                xSemaphoreTake(xUartMutex,portMAX_DELAY);
+                //xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,string_sensor1,strlen(string_sensor1));
-                xSemaphoreGive(xUartMutex);
+                //xSemaphoreGive(xUartMutex);
                 break;
             case '3':
                 sprintf(string_sensor2," - [Sensor 2] %d\n\r",g_value_sensor2);
-                xSemaphoreTake(xUartMutex,portMAX_DELAY);
+                //xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,string_sensor2,strlen(string_sensor2));
-                xSemaphoreGive(xUartMutex);
+                //xSemaphoreGive(xUartMutex);
                 break;
             default:
-                xSemaphoreTake(xUartMutex,portMAX_DELAY);
+                //xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,"\e[1;1H\e[2J 1 - CPU USAGE\n\r2 - Sensor 1 value \n\r3 - Sensor 2 value\n\r",strlen("\e[1;1H\e[2J 1 - CPU USAGE\n\r2 - Sensor 1 value \n\r3 - Sensor 2 value\n\r"));
-                xSemaphoreGive(xUartMutex);
+                //xSemaphoreGive(xUartMutex);
                 break;
             }
             
             uart_flush(uart_num);
             uart_flush_input(uart_num);
+            
 
         } 
-        
     }
     
 }
 
 
+
+ void HTTPCallback(TimerHandle_t xTimer){
+    uart_write_bytes(uart_num,"Timeout HTTP task\n\r",strlen("Timeout HTTP task\n\r"));
+}  
+
+void RS232Callback(TimerHandle_t xTimer){
+    uart_write_bytes(uart_num,"Timeout RS232 task\n\r",strlen("Timeout RS232 task\n\r"));
+}
+ 
+void LedCallback(TimerHandle_t xTimer){
+    uart_write_bytes(uart_num,"Timeout RS232 task\n\r",strlen("Timeout LED task\n\r"));
+}
+
+void ReadCallback(TimerHandle_t xTimer){
+    uart_write_bytes(uart_num,"Timeout Read task\n\r",strlen("Timeout Read task\n\r"));
+}
+void ControlCallback(TimerHandle_t xTimer){
+    uart_write_bytes(uart_num,"Timeout Control task\n\r",strlen("Timeout Control task\n\r"));
+}
+void CPUCallback(TimerHandle_t xTimer){
+    uart_write_bytes(uart_num,"Timeout CPU usage task\n\r",strlen("Timeout CPU usage task\n\r"));
+}
+
+
+void KeyScanCallback(TimerHandle_t xTimer){
+    uart_write_bytes(uart_num,"Timeout Keyscan task\n\r",strlen("Timeout Keyscan task\n\r"));
+}
