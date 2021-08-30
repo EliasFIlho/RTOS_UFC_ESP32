@@ -311,36 +311,26 @@ void KeyScan(void *pvParameters){
    char*  string_sensor2 = malloc(sizeof(char) * BUF_SIZE);
    uint8_t* data = (uint8_t*) malloc(BUF_SIZE);
     while(1){
-        //xSemaphoreTake(xUartMutex,portMAX_DELAY);
+        xTimerStart(xTimerTaskKeyscan,xTimerNoWait);
         int len = uart_read_bytes(uart_num,data,1,pdMS_TO_TICKS(20));
-        //xSemaphoreGive(xUartMutex);
         if(len > 0){
             data[len] = '\0';
             uart_write_bytes(uart_num,data,( uint8_t ) (1) );
             switch (data[len - 1]){
             case '1':
                 sprintf(CPU_String,"- [CPU USAGE] %f%%\n\r",CPU);
-                //xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,CPU_String,strlen(CPU_String));
-                //xSemaphoreGive(xUartMutex);
                 break;
             case '2':
-               
                 sprintf(string_sensor1," - [Sensor 1] %d\n\r",g_value_sensor1);
-                //xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,string_sensor1,strlen(string_sensor1));
-                //xSemaphoreGive(xUartMutex);
                 break;
             case '3':
                 sprintf(string_sensor2," - [Sensor 2] %d\n\r",g_value_sensor2);
-                //xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,string_sensor2,strlen(string_sensor2));
-                //xSemaphoreGive(xUartMutex);
                 break;
             default:
-                //xSemaphoreTake(xUartMutex,portMAX_DELAY);
                 uart_write_bytes(uart_num,"\e[1;1H\e[2J 1 - CPU USAGE\n\r2 - Sensor 1 value \n\r3 - Sensor 2 value\n\r",strlen("\e[1;1H\e[2J 1 - CPU USAGE\n\r2 - Sensor 1 value \n\r3 - Sensor 2 value\n\r"));
-                //xSemaphoreGive(xUartMutex);
                 break;
             }
             
@@ -349,6 +339,7 @@ void KeyScan(void *pvParameters){
             
 
         } 
+        xTimerStop(xTimerTaskKeyscan,pdMS_TO_TICKS(xTimerNoWait));
     }
     
 }
