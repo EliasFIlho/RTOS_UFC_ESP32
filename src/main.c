@@ -170,9 +170,12 @@ void Task_Read_Sensor(void* pvParameters){
     TickType_t xLastWakeTimer;
     const TickType_t xFrequency = pdMS_TO_TICKS(10);
     xLastWakeTimer = xTaskGetTickCount();
+    TickType_t evaluate_premp;
 
     while(1){
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        evaluate_premp = xFrequency -(xTaskGetTickCount()-xLastWakeTimer);
+        xTimerChangePeriod(xTimerReadSensor,(pdMS_TO_TICKS(xTimerReadSensorTick) - evaluate_premp),pdMS_TO_TICKS(0));
         xTimerStart(xTimerReadSensor,pdMS_TO_TICKS(xTimerNoWait));
         value_sensor1 = adc1_get_raw(ADC2_CHANNEL_0);
         value_sensor2 = adc1_get_raw(ADC2_CHANNEL_3);
@@ -189,9 +192,12 @@ void task_control(void *pvParameter){
     TickType_t xLastWakeTimer;
     const TickType_t xFrequency = pdMS_TO_TICKS(15);
     xLastWakeTimer = xTaskGetTickCount();
+    TickType_t evaluate_premp;
     int i;
     while(1){
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        evaluate_premp = xFrequency -(xTaskGetTickCount()-xLastWakeTimer);
+        xTimerChangePeriod(xTimerControl,(pdMS_TO_TICKS(xTimerControlTick) - evaluate_premp),pdMS_TO_TICKS(0));
         xTimerStart(xTimerControl,pdMS_TO_TICKS(xTimerNoWait));
         if(xQueueReceive(xQueueSensores,&sensor1,pdMS_TO_TICKS(11)) == pdTRUE){
             if(xQueueReceive(xQueueSensores,&sensor2,pdMS_TO_TICKS(11)) == pdTRUE){
@@ -248,8 +254,11 @@ void CPU_usage(void *pvParameters){
     TickType_t xLastWakeTimer;
     const TickType_t xFrequency = pdMS_TO_TICKS(1000);
     xLastWakeTimer = xTaskGetTickCount();
+    TickType_t evaluate_premp;
     while (1){
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        evaluate_premp = xFrequency -(xTaskGetTickCount()-xLastWakeTimer);
+        xTimerChangePeriod(xTimerTaskCPU,(pdMS_TO_TICKS(xTimerTaskCPUTick) - evaluate_premp),pdMS_TO_TICKS(0));
         xTimerStart(xTimerTaskCPU,pdMS_TO_TICKS(xTimerNoWait));
         CPU = ((float)(1000) - ((float)(idletime)/(float)(CPU_CLK_FREQ)))/((float)(1000));
         idletime = 0;
@@ -274,10 +283,13 @@ void HTTP(void*pvParameters){
     TickType_t xLastWakeTimer;
     const TickType_t xFrequency = pdMS_TO_TICKS(1000);
     xLastWakeTimer = xTaskGetTickCount();
+    TickType_t evaluate_premp;
     int i;
     while(1){
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        evaluate_premp = xFrequency -(xTaskGetTickCount()-xLastWakeTimer);
+        xTimerChangePeriod(xTimerTaskHTTP,(pdMS_TO_TICKS(xTimerTaskHTTPTick) - evaluate_premp),pdMS_TO_TICKS(0));
         xTimerStart(xTimerTaskHTTP,pdMS_TO_TICKS(xTimerNoWait));
         for(i = 0;i < HTTP_REQUEST_PROC_LOAD ;i++ );
         xTimerStop(xTimerTaskHTTP,pdMS_TO_TICKS(xTimerNoWait));
@@ -293,10 +305,13 @@ void RS232Task(void*pvParameters){
     TickType_t xLastWakeTimer;
     const TickType_t xFrequency = pdMS_TO_TICKS(1000);
     xLastWakeTimer = xTaskGetTickCount();
+    TickType_t evaluate_premp;
     int i;
     while(1){
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+        evaluate_premp = xFrequency -(xTaskGetTickCount()-xLastWakeTimer);
+        xTimerChangePeriod(xTimerTaskRS232,(pdMS_TO_TICKS(xTimerTaskRS232Tick) - evaluate_premp),pdMS_TO_TICKS(0));
         xTimerStart(xTimerTaskRS232,pdMS_TO_TICKS(xTimerNoWait));
         for(i = 0;i < RS232_CHAR_PROC_LOAD ;i++ );
         xTimerStop(xTimerTaskRS232,pdMS_TO_TICKS(xTimerNoWait));
