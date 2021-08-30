@@ -1,15 +1,22 @@
+// ******************** Include libs C ******************** //
+
 #include <stdio.h>
 #include "string.h"
 
+// ******************** Include libs do FreeRTOS ******************** //
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include"freertos/timers.h"
 #include "freertos/semphr.h"
 
+// ******************** Include libs de acesso ao hardware ******************** //
+
 #include "driver/gpio.h"
 #include "driver/adc.h"
 #include "driver/uart.h"
+
+// ******************** Defines para funções de hardware ******************** //
 
 #define LED_G 17
 #define LED_R 16
@@ -19,11 +26,15 @@
 #define INPUT_MASK ((1 << button))
 #define HIGH 1
 #define LOW 0
+
+// ******************** Define para processamento de tasks ******************** //
+
 #define HTTP_REQUEST_PROC_LOAD 0xfffff
 #define RS232_CHAR_PROC_LOAD 0xfffff
 #define Control 0xffff
 #define CPU_limit (float)(85)
 
+// ******************** Constantes de tempo para timer ******************** //
 
 #define xTimerReadSensorTick 50
 #define xTimerControlTick 100
@@ -32,12 +43,12 @@
 #define xTimerTaskRS232Tick 500
 #define xTimerTaskLedTick 1050
 #define xTimerTaskKeyscanTick 1000
-
 #define xTimerNoWait 0
 
+// ******************** Buffer para uart ******************** //
 #define BUF_SIZE (1024)
 
-#define NUM_TIMER 6
+// ******************** Handle para as tasks ******************** //
 
 TaskHandle_t taskreadsensor = NULL; 
 TaskHandle_t taskcontrol = NULL; 
@@ -47,9 +58,12 @@ TaskHandle_t taskRS232 = NULL;
 TaskHandle_t task_led_control = NULL;
 TaskHandle_t KeyScanTask = NULL;
 
-QueueHandle_t xQueueSensores;
-QueueHandle_t xQueueCPU;
 
+// ******************** Handle da fila ******************** //
+
+QueueHandle_t xQueueSensores;
+
+// ******************** Handle dos timers ******************** //
 TimerHandle_t xTimerReadSensor;
 TimerHandle_t xTimerControl;
 TimerHandle_t xTimerTaskCPU;
@@ -58,31 +72,29 @@ TimerHandle_t xTimerTaskRS232;
 TimerHandle_t xTimerTaskLed;
 TimerHandle_t xTimerTaskKeyscan;
 
-
-
-
-SemaphoreHandle_t xUartMutex;
-
-int test = 0;
+// ******************** Variaveis globais ******************** //
 
 float CPU = 0.0;
 TickType_t idletime = 0;
 TickType_t LastTime = 0;
-
 int g_value_sensor1;
 int g_value_sensor2;
 
 
+// ******************** Declaração da função de configuração de GPIO ******************** //
 void gpio_all_config();
+
+// ******************** Declaração das função das tasks ******************** //
 void Task_Read_Sensor(void *pvParameters); 
 void task_control(void *pvParameters);
 void CPU_usage(void *pvParameters);
 void HTTP(void *pvParameters);
 void RS232Task(void*pvParameters);
 void Led_Control(void *pvParameters);
-void LedBlink1Hz(int led);
 void KeyScan(void *pvParameters);
 
+
+// ******************** Declaração das funções de callback dos timers ******************** //
 void ReadCallback(TimerHandle_t xTimer);
 void ControlCallback(TimerHandle_t xTimer);
 void CPUCallback(TimerHandle_t xTimer);
@@ -92,6 +104,7 @@ void LedCallback(TimerHandle_t xTimer);
 void KeyScanCallback(TimerHandle_t xTimer);
 
 
+// ******************** Estrutura para configuração de GPIO output e input  ******************** //
 gpio_config_t gpio_output={
     .intr_type = GPIO_INTR_DISABLE,
     .mode = GPIO_MODE_OUTPUT,
@@ -110,7 +123,7 @@ gpio_config_t gpio_input ={
 
 
 
-
+// ******************** Função de configuração de GPIO e ADC ******************** //
 void gpio_all_config(){
  gpio_config(&gpio_output);
  gpio_config(&gpio_input);
@@ -121,7 +134,7 @@ void gpio_all_config(){
  adc1_config_channel_atten(ADC1_CHANNEL_3,ADC_ATTEN_DB_0);
 }
 
-
+// ******************** Estrutura para configuração do uart ******************** //
 const uart_port_t uart_num = UART_NUM_0;
     uart_config_t uart_config = {
         .baud_rate = 115200,
@@ -133,12 +146,15 @@ const uart_port_t uart_num = UART_NUM_0;
 
 
 void app_main() {
+// ******************** Chamada função de configuração de GPIO e ADC ******************** //
  gpio_all_config();
  
+ // ******************** Configuração do uart ******************** //
  uart_param_config(uart_num, &uart_config);
  uart_set_pin(uart_num,1,3,UART_PIN_NO_CHANGE,UART_PIN_NO_CHANGE);
  uart_driver_install(uart_num, BUF_SIZE * 2, BUF_SIZE, 0, NULL, 0);
  
+ // ******************** Criação das tasks ******************** //
  xTaskCreate(Task_Read_Sensor,"Task Read Sensor",configMINIMAL_STACK_SIZE+1024,NULL,2,&taskreadsensor);
  xTaskCreate(task_control,"Task Control",configMINIMAL_STACK_SIZE*2,NULL,3,&taskcontrol);
  xTaskCreate(CPU_usage,"CPU Usage",configMINIMAL_STACK_SIZE+1024,NULL,2,&taskCPU);
@@ -147,7 +163,7 @@ void app_main() {
  xTaskCreate(Led_Control,"Led Control",configMINIMAL_STACK_SIZE+1024,NULL,1,&task_led_control);
  xTaskCreate(KeyScan,"Key Scan Task",configMINIMAL_STACK_SIZE+2048,NULL,2,&KeyScanTask);
  
-
+// ******************** Criação dos timers ******************** //
  xTimerTaskHTTP = xTimerCreate("HTTP TIMER",pdMS_TO_TICKS(xTimerTaskHTTPTick),pdFALSE,0,HTTPCallback);
  xTimerTaskRS232 = xTimerCreate("RS232 Timer",pdMS_TO_TICKS(xTimerTaskRS232Tick),pdFALSE,0,RS232Callback);
  xTimerTaskKeyscan = xTimerCreate("Key Timer",pdMS_TO_TICKS(xTimerTaskKeyscanTick),pdFALSE,0,KeyScanCallback);
@@ -157,12 +173,12 @@ void app_main() {
  xTimerControl = xTimerCreate("Control Timer",pdMS_TO_TICKS(xTimerControlTick),pdFALSE,0,ControlCallback);
  
 
- 
+ // ******************** Criação da fila ******************** //
  xQueueSensores = xQueueCreate(2,sizeof(int));
- xUartMutex = xSemaphoreCreateMutex();
 
 }
 
+// ******************** Task responsável por realizar as leituras dos sensores ******************** //
 void Task_Read_Sensor(void* pvParameters){
 
     int value_sensor1 = 0;
@@ -185,6 +201,8 @@ void Task_Read_Sensor(void* pvParameters){
      
     }    
 }
+
+// ******************** Task responsável por processar os dados recebidos ******************** //
 
 void task_control(void *pvParameter){
     int sensor1 = 0;
@@ -223,11 +241,8 @@ void task_control(void *pvParameter){
 
 }
 
-void LedBlink1Hz(int led){
-   
-}
 
-   
+// ******************** Task responsável por controlar os leds ******************** //
 void Led_Control(void *pvParameters){
     while(1){
         //xTimerStart(xTimerTaskLed,pdMS_TO_TICKS(xTimerNoWait));
@@ -250,6 +265,8 @@ void Led_Control(void *pvParameters){
     
 }
 
+// ******************** Task responsável por realizar uma verificação do tempo de uso da CPU ******************** //
+
 void CPU_usage(void *pvParameters){
     TickType_t xLastWakeTimer;
     const TickType_t xFrequency = pdMS_TO_TICKS(1000);
@@ -270,6 +287,7 @@ void CPU_usage(void *pvParameters){
 }
 
 
+// ******************** Idle Hook ******************** //
 void vApplicationIdleHook( void ){
     unsigned long int tick = xTaskGetTickCount();
     while (xTaskGetTickCount() == tick){
@@ -278,7 +296,7 @@ void vApplicationIdleHook( void ){
     
 }
 
-
+// ******************** Task periódica de HTTP ******************** //
 void HTTP(void*pvParameters){
     TickType_t xLastWakeTimer;
     const TickType_t xFrequency = pdMS_TO_TICKS(1000);
@@ -300,7 +318,7 @@ void HTTP(void*pvParameters){
     
 }
 
-
+// ******************** Task aperiódica de RS232 ******************** //
 void RS232Task(void*pvParameters){
     TickType_t xLastWakeTimer;
     const TickType_t xFrequency = pdMS_TO_TICKS(1000);
@@ -319,6 +337,7 @@ void RS232Task(void*pvParameters){
     
 }
 
+// ******************** Task responsável por ler dados externos do teclado ******************** //
 void KeyScan(void *pvParameters){
 
    char* CPU_String = malloc(sizeof(char) * BUF_SIZE);
@@ -359,7 +378,7 @@ void KeyScan(void *pvParameters){
     
 }
 
-
+// ******************** Funções de CallBack ******************** //
 
  void HTTPCallback(TimerHandle_t xTimer){
     uart_write_bytes(uart_num,"Timeout HTTP task\n\r",strlen("Timeout HTTP task\n\r"));
