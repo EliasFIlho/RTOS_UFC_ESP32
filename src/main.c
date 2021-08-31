@@ -73,6 +73,11 @@ TimerHandle_t xTimerTaskRS232;
 TimerHandle_t xTimerTaskLed;
 TimerHandle_t xTimerTaskKeyscan;
 
+// ******************** Handle do semaforo ******************** //
+
+SemaphoreHandle_t xSemaphore;
+SemaphoreHandle_t xSemaphoreCPU;
+SemaphoreHandle_t xSemaphore2;
 // ******************** Variaveis globais ******************** //
 
 float CPU = 0.0;
@@ -163,7 +168,7 @@ void app_main() {
  xTaskCreate(RS232Task,"RS232 Task",configMINIMAL_STACK_SIZE,NULL,1,&taskRS232);
  xTaskCreate(Led_Control,"Led Control",configMINIMAL_STACK_SIZE+1024,NULL,1,&task_led_control);
  xTaskCreate(KeyScan,"Key Scan Task",configMINIMAL_STACK_SIZE+2048,NULL,2,&KeyScanTask);
- //xTaskCreate(Gatekeeper,"Gatekeeper",configMINIMAL_STACK_SIZE+2048,NULL,1,&GatekeeperTask);
+
 // ******************** Criação dos timers ******************** //
  xTimerTaskHTTP = xTimerCreate("HTTP TIMER",pdMS_TO_TICKS(xTimerTaskHTTPTick),pdFALSE,0,HTTPCallback);
  xTimerTaskRS232 = xTimerCreate("RS232 Timer",pdMS_TO_TICKS(xTimerTaskRS232Tick),pdFALSE,0,RS232Callback);
@@ -173,10 +178,12 @@ void app_main() {
  xTimerReadSensor = xTimerCreate("ReadSensor Timer",pdMS_TO_TICKS(xTimerReadSensorTick),pdFALSE,0,ReadCallback);
  xTimerControl = xTimerCreate("Control Timer",pdMS_TO_TICKS(xTimerControlTick),pdFALSE,0,ControlCallback);
  
-
+ xSemaphore2 = xSemaphoreCreateBinary();
+ xSemaphoreCPU = xSemaphoreCreateBinary();
+ xSemaphore = xSemaphoreCreateBinary();
  // ******************** Criação da fila ******************** //
  xQueueSensores = xQueueCreate(2,sizeof(int));
- //xGateQueue = xQueueCreate(10,(sizeof(char) * BUF_SIZE));
+
 
 }
 
@@ -230,6 +237,8 @@ void Task_control(void *pvParameter){
                 g_value_sensor1 = sensor1;
                 g_value_sensor2 = sensor2;
                 for(i = 0;i < Control;i++);
+                xSemaphoreGive(xSemaphore);
+                xSemaphoreGive(xSemaphore2);
                 xTaskNotifyGive(taskHTTP);
                 xTaskNotifyGive(taskRS232);
                 
@@ -252,7 +261,6 @@ void Led_Control(void *pvParameters){
     TickType_t evaluate_premp;
     while(1){
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
-       // ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(5));
         evaluate_premp = xFrequency -(xTaskGetTickCount()-xLastWakeTimer);
         xTimerChangePeriod(xTimerTaskLed,(pdMS_TO_TICKS(xTimerControlTick) - evaluate_premp),pdMS_TO_TICKS(0));
         xTimerStart(xTimerTaskLed,pdMS_TO_TICKS(xTimerNoWait));
@@ -288,6 +296,7 @@ void CPU_usage(void *pvParameters){
         xTimerChangePeriod(xTimerTaskCPU,(pdMS_TO_TICKS(xTimerTaskCPUTick) - evaluate_premp),pdMS_TO_TICKS(0));
         xTimerStart(xTimerTaskCPU,pdMS_TO_TICKS(xTimerNoWait));
         CPU = ((float)(1000) - ((float)(idletime)/(float)(CPU_CLK_FREQ)))/((float)(1000));
+        xSemaphoreGive(xSemaphoreCPU);
         idletime = 0;
         xTimerStop(xTimerTaskCPU,pdMS_TO_TICKS(xTimerNoWait));
         
@@ -362,14 +371,17 @@ void KeyScan(void *pvParameters){
             uart_write_bytes(uart_num,data,( uint8_t ) (1) );
             switch (data[len - 1]){
             case '1':
+                xSemaphoreTake(xSemaphoreCPU,pdMS_TO_TICKS(portMAX_DELAY));
                 sprintf(CPU_String,"- [CPU USAGE] %f%%\n\r",CPU);
                 uart_write_bytes(uart_num,CPU_String,strlen(CPU_String));
                 break;
             case '2':
+                xSemaphoreTake(xSemaphore,pdMS_TO_TICKS(portMAX_DELAY));
                 sprintf(string_sensor1," - [Sensor 1] %d\n\r",g_value_sensor1);
                 uart_write_bytes(uart_num,string_sensor1,strlen(string_sensor1));
                 break;
             case '3':
+                xSemaphoreTake(xSemaphore2,pdMS_TO_TICKS(portMAX_DELAY));
                 sprintf(string_sensor2," - [Sensor 2] %d\n\r",g_value_sensor2);
                 uart_write_bytes(uart_num,string_sensor2,strlen(string_sensor2));
                 break;
@@ -419,14 +431,3 @@ void KeyScanCallback(TimerHandle_t xTimer){
 }
 
 
-/* void Gatekeeper(void *pvParameters){
-    char* GateString = malloc(sizeof(char) * BUF_SIZE);
-    while(1){
-        
-        xQueueReceive(xGateQueue,GateString,portMAX_DELAY);
-        uart_write_bytes(uart_num,GateString,strlen(GateString));
-
-
-    }
-    
-} */
