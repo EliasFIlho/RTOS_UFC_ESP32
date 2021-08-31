@@ -57,11 +57,12 @@ TaskHandle_t taskHTTP = NULL;
 TaskHandle_t taskRS232 = NULL;
 TaskHandle_t task_led_control = NULL;
 TaskHandle_t KeyScanTask = NULL;
+TaskHandle_t GatekeeperTask = NULL;
 
-
-// ******************** Handle da fila ******************** //
+// ******************** Handle das filas ******************** //
 
 QueueHandle_t xQueueSensores;
+QueueHandle_t xGateQueue;
 
 // ******************** Handle dos timers ******************** //
 TimerHandle_t xTimerReadSensor;
@@ -86,13 +87,13 @@ void gpio_all_config();
 
 // ******************** Declaração das função das tasks ******************** //
 void Task_Read_Sensor(void *pvParameters); 
-void task_control(void *pvParameters);
+void Task_control(void *pvParameters);
 void CPU_usage(void *pvParameters);
 void HTTP(void *pvParameters);
 void RS232Task(void*pvParameters);
 void Led_Control(void *pvParameters);
 void KeyScan(void *pvParameters);
-
+void Gatekeeper(void *pvParameters);
 
 // ******************** Declaração das funções de callback dos timers ******************** //
 void ReadCallback(TimerHandle_t xTimer);
@@ -156,13 +157,13 @@ void app_main() {
  
  // ******************** Criação das tasks ******************** //
  xTaskCreate(Task_Read_Sensor,"Task Read Sensor",configMINIMAL_STACK_SIZE+1024,NULL,2,&taskreadsensor);
- xTaskCreate(task_control,"Task Control",configMINIMAL_STACK_SIZE*2,NULL,3,&taskcontrol);
+ xTaskCreate(Task_control,"Task Control",configMINIMAL_STACK_SIZE*2,NULL,3,&taskcontrol);
  xTaskCreate(CPU_usage,"CPU Usage",configMINIMAL_STACK_SIZE+1024,NULL,2,&taskCPU);
  xTaskCreate(HTTP,"HTTP Task",configMINIMAL_STACK_SIZE,NULL,1,&taskHTTP);
  xTaskCreate(RS232Task,"RS232 Task",configMINIMAL_STACK_SIZE,NULL,1,&taskRS232);
  xTaskCreate(Led_Control,"Led Control",configMINIMAL_STACK_SIZE+1024,NULL,1,&task_led_control);
  xTaskCreate(KeyScan,"Key Scan Task",configMINIMAL_STACK_SIZE+2048,NULL,2,&KeyScanTask);
- 
+ //xTaskCreate(Gatekeeper,"Gatekeeper",configMINIMAL_STACK_SIZE+2048,NULL,1,&GatekeeperTask);
 // ******************** Criação dos timers ******************** //
  xTimerTaskHTTP = xTimerCreate("HTTP TIMER",pdMS_TO_TICKS(xTimerTaskHTTPTick),pdFALSE,0,HTTPCallback);
  xTimerTaskRS232 = xTimerCreate("RS232 Timer",pdMS_TO_TICKS(xTimerTaskRS232Tick),pdFALSE,0,RS232Callback);
@@ -175,6 +176,7 @@ void app_main() {
 
  // ******************** Criação da fila ******************** //
  xQueueSensores = xQueueCreate(2,sizeof(int));
+ //xGateQueue = xQueueCreate(10,(sizeof(char) * BUF_SIZE));
 
 }
 
@@ -204,7 +206,7 @@ void Task_Read_Sensor(void* pvParameters){
 
 // ******************** Task responsável por processar os dados recebidos ******************** //
 
-void task_control(void *pvParameter){
+void Task_control(void *pvParameter){
     int sensor1 = 0;
     int sensor2 = 0;
     TickType_t xLastWakeTimer;
@@ -244,8 +246,16 @@ void task_control(void *pvParameter){
 
 // ******************** Task responsável por controlar os leds ******************** //
 void Led_Control(void *pvParameters){
+    TickType_t xLastWakeTimer;
+    const TickType_t xFrequency = pdMS_TO_TICKS(50);
+    xLastWakeTimer = xTaskGetTickCount();
+    TickType_t evaluate_premp;
     while(1){
-        //xTimerStart(xTimerTaskLed,pdMS_TO_TICKS(xTimerNoWait));
+        vTaskDelayUntil(&xLastWakeTimer,xFrequency);
+       // ulTaskNotifyTake(pdTRUE,pdMS_TO_TICKS(5));
+        evaluate_premp = xFrequency -(xTaskGetTickCount()-xLastWakeTimer);
+        xTimerChangePeriod(xTimerTaskLed,(pdMS_TO_TICKS(xTimerControlTick) - evaluate_premp),pdMS_TO_TICKS(0));
+        xTimerStart(xTimerTaskLed,pdMS_TO_TICKS(xTimerNoWait));
         if(CPU <= CPU_limit){
             gpio_set_level(LED_G,LOW);
             vTaskDelay(pdMS_TO_TICKS(500));
@@ -257,8 +267,8 @@ void Led_Control(void *pvParameters){
             gpio_set_level(LED_R,HIGH);
             vTaskDelay(pdMS_TO_TICKS(500));
         }
-        //xTimerStop(xTimerTaskLed,pdMS_TO_TICKS(xTimerNoWait));
-        vTaskDelay(pdMS_TO_TICKS(50));
+        xTimerStop(xTimerTaskLed,pdMS_TO_TICKS(xTimerNoWait));
+       
         
         
     }
@@ -306,7 +316,7 @@ void HTTP(void*pvParameters){
     while(1){
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         vTaskDelayUntil(&xLastWakeTimer,xFrequency);
-        evaluate_premp = xFrequency -(xTaskGetTickCount()-xLastWakeTimer);
+        evaluate_premp = xFrequency - (xTaskGetTickCount()-xLastWakeTimer);
         xTimerChangePeriod(xTimerTaskHTTP,(pdMS_TO_TICKS(xTimerTaskHTTPTick) - evaluate_premp),pdMS_TO_TICKS(0));
         xTimerStart(xTimerTaskHTTP,pdMS_TO_TICKS(xTimerNoWait));
         for(i = 0;i < HTTP_REQUEST_PROC_LOAD ;i++ );
@@ -389,7 +399,7 @@ void RS232Callback(TimerHandle_t xTimer){
 }
  
 void LedCallback(TimerHandle_t xTimer){
-    uart_write_bytes(uart_num,"Timeout RS232 task\n\r",strlen("Timeout LED task\n\r"));
+    uart_write_bytes(uart_num,"Timeout LED task\n\r",strlen("Timeout LED task\n\r"));
 }
 
 void ReadCallback(TimerHandle_t xTimer){
@@ -404,5 +414,19 @@ void CPUCallback(TimerHandle_t xTimer){
 
 
 void KeyScanCallback(TimerHandle_t xTimer){
+    
     uart_write_bytes(uart_num,"Timeout Keyscan task\n\r",strlen("Timeout Keyscan task\n\r"));
 }
+
+
+/* void Gatekeeper(void *pvParameters){
+    char* GateString = malloc(sizeof(char) * BUF_SIZE);
+    while(1){
+        
+        xQueueReceive(xGateQueue,GateString,portMAX_DELAY);
+        uart_write_bytes(uart_num,GateString,strlen(GateString));
+
+
+    }
+    
+} */
